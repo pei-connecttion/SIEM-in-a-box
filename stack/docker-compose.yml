@@ -1,0 +1,257 @@
+version: "3.8"
+
+services:
+  # ============================================
+  # Geração de Certificados
+  # ============================================
+  setup:
+    container_name: siem-setup
+    image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION}
+    volumes:
+      - certs:/usr/share/elasticsearch/config/certs
+      - ../utils/setup.sh:/usr/share/elasticsearch/setup.sh:ro
+      - ../utils/configure-fleet-ssl.sh:/usr/share/kibana/configure-fleet-ssl.sh:ro
+    user: "0"
+    environment:
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+      - KIBANA_PASSWORD=${KIBANA_PASSWORD}
+    command: >
+      bash -c "bash /usr/share/elasticsearch/setup.sh && bash /usr/share/kibana/configure-fleet-ssl.sh"
+    healthcheck:
+      test: ["CMD-SHELL", "[ -f config/certs/es01/es01.crt ]"]
+      interval: 1s
+      timeout: 5s
+      retries: 120
+    networks:
+      - siem-network
+
+  # ============================================
+  # Elasticsearch
+  # ============================================
+  es01:
+    container_name: siem-es01
+    depends_on:
+      setup:
+        condition: service_healthy
+    image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION}
+    volumes:
+      - certs:/usr/share/elasticsearch/config/certs
+      - esdata01:/usr/share/elasticsearch/data
+    ports:
+      - ${ES_PORT}:9200
+    environment:
+      - node.name=es01
+      - cluster.name=${CLUSTER_NAME}
+      - discovery.type=single-node
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+      - bootstrap.memory_lock=true
+      - xpack.security.enabled=true
+      - xpack.security.http.ssl.enabled=true
+      - xpack.security.http.ssl.key=certs/es01/es01.key
+      - xpack.security.http.ssl.certificate=certs/es01/es01.crt
+      - xpack.security.http.ssl.certificate_authorities=certs/ca/ca.crt
+      - xpack.security.transport.ssl.enabled=true
+      - xpack.security.transport.ssl.key=certs/es01/es01.key
+      - xpack.security.transport.ssl.certificate=certs/es01/es01.crt
+      - xpack.security.transport.ssl.certificate_authorities=certs/ca/ca.crt
+      - xpack.security.transport.ssl.verification_mode=certificate
+      - xpack.license.self_generated.type=${LICENSE}
+    mem_limit: ${MEM_LIMIT}
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -s --cacert config/certs/ca/ca.crt https://localhost:9200 | grep -q 'missing authentication credentials'",
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 120
+    networks:
+      - siem-network
+
+  # ============================================
+  # Kibana
+  # ============================================
+  kibana:
+    container_name: siem-kibana
+    depends_on:
+      es01:
+        condition: service_healthy
+    image: docker.elastic.co/kibana/kibana:${STACK_VERSION}
+    volumes:
+      - certs:/usr/share/kibana/config/certs
+      - kibanadata:/usr/share/kibana/data
+      - ./kibana.yml:/usr/share/kibana/config/kibana.yml:ro
+    ports:
+      - ${KIBANA_PORT}:5601
+    environment:
+      - SERVERNAME=kibana
+      - ELASTICSEARCH_HOSTS=https://es01:9200
+      - ELASTICSEARCH_USERNAME=kibana_system
+      - ELASTICSEARCH_PASSWORD=${KIBANA_PASSWORD}
+      - ELASTICSEARCH_SSL_CERTIFICATEAUTHORITIES=config/certs/ca/ca.crt
+      - XPACK_SECURITY_ENCRYPTIONKEY=${ENCRYPTION_KEY}
+      - XPACK_ENCRYPTEDSAVEDOBJECTS_ENCRYPTIONKEY=${ENCRYPTION_KEY}
+      - XPACK_REPORTING_ENCRYPTIONKEY=${ENCRYPTION_KEY}
+      - XPACK_REPORTING_KIBANASERVER_HOSTNAME=localhost
+      - SERVER_SSL_ENABLED=true
+      - SERVER_SSL_CERTIFICATE=config/certs/kibana/kibana.crt
+      - SERVER_SSL_KEY=config/certs/kibana/kibana.key
+      - SERVER_SSL_CERTIFICATEAUTHORITIES=config/certs/ca/ca.crt
+      - ELASTIC_APM_SECRET_TOKEN=${ELASTIC_APM_SECRET_TOKEN}
+    mem_limit: ${MEM_LIMIT}
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -I -s --cacert config/certs/ca/ca.crt https://localhost:5601 | grep -q 'HTTP/1.1 302 Found'",
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 120
+    networks:
+      - siem-network
+
+
+
+  # ============================================
+  # Kafka
+  # ============================================
+  kafka:
+    container_name: siem-kafka
+    image: bitnamilegacy/kafka:3.7
+    volumes:
+      - kafkadata:/bitnami
+    ports:
+      - "9094:9094"
+    environment:
+      - KAFKA_ENABLE_KRAFT=yes
+      - KAFKA_CFG_NODE_ID=1
+      - KAFKA_CFG_PROCESS_ROLES=broker,controller
+      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=1@kafka:9093
+      - KAFKA_CFG_LISTENERS=INTERNAL://:9092,EXTERNAL://:9094,CONTROLLER://:9093
+      - KAFKA_CFG_ADVERTISED_LISTENERS=INTERNAL://kafka:9092,EXTERNAL://localhost:9094
+      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      - KAFKA_CFG_INTER_BROKER_LISTENER_NAME=INTERNAL
+      - KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE=true
+      - KAFKA_CFG_OFFSETS_TOPIC_REPLICATION_FACTOR=1
+      - KAFKA_CFG_TRANSACTION_STATE_LOG_MIN_ISR=1
+      - KAFKA_CFG_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1
+    mem_limit: ${MEM_LIMIT}
+    healthcheck:
+      test: ["CMD-SHELL", "bash -lc 'echo > /dev/tcp/127.0.0.1/9092'"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    networks:
+      - siem-network
+
+
+
+  # ============================================
+  # Logstash
+  # ============================================
+  logstash:
+    container_name: siem-logstash
+    image: docker.elastic.co/logstash/logstash:${STACK_VERSION}
+    user: "0"
+    depends_on:
+      kafka:
+        condition: service_healthy
+      es01:
+        condition: service_healthy
+    restart: unless-stopped
+    environment:
+      - LS_JAVA_OPTS=-Xms512m -Xmx512m
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - ELASTICSEARCH_HOST=https://es01:9200
+      - ELASTICSEARCH_HOSTS=https://es01:9200
+      - ELASTICSEARCH_USERNAME=elastic
+      - ELASTICSEARCH_PASSWORD=${ELASTIC_PASSWORD}
+      - ELASTICSEARCH_CA=/certs/ca/ca.crt
+    volumes:
+      - certs:/certs:ro
+      - ./pipeline.conf:/usr/share/logstash/pipeline/pipeline.conf
+      - ./logstash.yml:/usr/share/logstash/config/logstash.yml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "logstash --version >/dev/null 2>&1"]
+      interval: 20s
+      timeout: 10s
+      retries: 30
+    networks:
+      - siem-network
+  
+  fleet-server:
+    container_name: siem-fleet-server
+    depends_on:
+      kibana:
+        condition: service_healthy
+      es01:
+        condition: service_healthy
+    image: docker.elastic.co/beats/elastic-agent:${STACK_VERSION}
+    volumes:
+      - certs:/certs
+      - fleetserverdata:/usr/share/elastic-agent
+    ports:
+      - ${FLEET_PORT}:8220
+      - ${APMSERVER_PORT}:8200
+    user: root
+    restart: on-failure
+    environment:
+      - SSL_CERTIFICATE_AUTHORITIES=/certs/ca/ca.crt
+      - CERTIFICATE_AUTHORITIES=/certs/ca/ca.crt
+      - FLEET_CA=/certs/ca/ca.crt
+      - FLEET_ENROLL=1
+      - FLEET_INSECURE=true
+      - FLEET_SERVER_ELASTICSEARCH_CA=/certs/ca/ca.crt
+      - FLEET_SERVER_ELASTICSEARCH_HOST=https://es01:9200
+      - FLEET_SERVER_ELASTICSEARCH_INSECURE=true
+      - FLEET_SERVER_ENABLE=1
+      - FLEET_SERVER_CERT=/certs/fleet-server/fleet-server.crt
+      - FLEET_SERVER_CERT_KEY=/certs/fleet-server/fleet-server.key
+      - FLEET_SERVER_INSECURE_HTTP=true
+      - FLEET_SERVER_POLICY_ID=fleet-server-policy
+      - FLEET_URL=https://fleet-server:8220
+      - KIBANA_FLEET_CA=/certs/ca/ca.crt
+      - KIBANA_FLEET_SETUP=1
+      - KIBANA_FLEET_USERNAME=elastic
+      - KIBANA_FLEET_PASSWORD=${ELASTIC_PASSWORD}
+      - KIBANA_HOST=https://kibana:5601
+      # Monitoring output configuration for internal beats
+      - ELASTICSEARCH_HOST=https://es01:9200
+      - ELASTICSEARCH_HOSTS=https://es01:9200
+      - ELASTICSEARCH_USERNAME=elastic
+      - ELASTICSEARCH_PASSWORD=${ELASTIC_PASSWORD}
+      - ELASTICSEARCH_CA=/certs/ca/ca.crt
+    networks:
+      - siem-network
+
+# ============================================
+# Networks
+# ============================================
+networks:
+  siem-network:
+    driver: bridge
+    name: siem-network
+
+# ============================================
+# Volumes
+# ============================================
+volumes:
+  certs:
+    driver: local
+  esdata01:
+    driver: local
+  kibanadata:
+    driver: local
+  kafkadata:
+    driver: local
+  logstashdata:
+    driver: local
+  fleetserverdata:
+    driver: local

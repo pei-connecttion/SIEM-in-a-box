@@ -1,0 +1,98 @@
+# ===== FLEET SERVER CONFIGURATION =====
+
+elastic:
+  apm:
+    active: true
+    serverUrl: "http://fleet-server:8200"
+    secretToken: ${ELASTIC_APM_SECRET_TOKEN}
+server.host: "0.0.0.0"
+telemetry.enabled: "true"
+
+# 1. Fleet Server Hosts (onde os agents se conectam)
+xpack.fleet.fleetServerHosts:
+  - id: "default-fleet-server"
+    name: "Fleet Server Default"
+    is_default: true
+    host_urls:
+      - "https://192.168.122.1:8220"
+    is_internal: false
+
+
+
+# 2. Instalar integrações automaticamente
+xpack.fleet.packages:
+  - name: "system"
+    version: "latest"
+  - name: "fleet_server"
+    version: "latest"
+
+# 3. Criar Agent Policies automaticamente
+xpack.fleet.agentPolicies:
+  # Política para o Fleet Server
+  - name: "Fleet Server Policy"
+    id: "fleet-server-policy"
+    namespace: "default"
+    is_default_fleet_server: true
+    is_managed: false
+    monitoring_enabled:
+      - logs
+      - metrics
+    package_policies:
+      - name: "fleet_server-1"
+        id: "fleet-server-package"
+        package:
+          name: "fleet_server"
+  
+  # Política para monitorização de sistemas Linux
+  - name: "Linux System Monitoring"
+    id: "linux-system-policy"
+    namespace: "production"
+    is_default: false
+    is_managed: false
+    monitoring_enabled:
+      - logs
+      - metrics
+    package_policies:
+      - name: "system-integration"
+        id: "system-integration-1"
+        package:
+          name: "system"
+        inputs:
+          - type: "system/metrics"
+            enabled: true
+            streams:
+              - data_stream:
+                  dataset: "system.cpu"
+                enabled: true
+              - data_stream:
+                  dataset: "system.memory"
+                enabled: true
+              - data_stream:
+                  dataset: "system.network"
+                enabled: true
+              - data_stream:
+                  dataset: "system.filesystem"
+                enabled: true
+              - data_stream:
+                  dataset: "system.diskio"
+                enabled: true
+          
+          - type: "logfile"
+            enabled: true
+            streams:
+              - data_stream:
+                  dataset: "system.auth"
+                enabled: true
+                vars:
+                  - name: "paths"
+                    value:
+                      - "/var/log/auth.log*"
+                      - "/var/log/secure*"
+              - data_stream:
+                  dataset: "system.syslog"
+                enabled: true
+                vars:
+                  - name: "paths"
+                    value:
+                      - "/var/log/messages*"
+                      - "/var/log/syslog*"

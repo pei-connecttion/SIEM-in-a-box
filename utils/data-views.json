@@ -1,0 +1,9 @@
+{
+  "data_views": [
+    {
+      "title": "logs-nginx-default",
+      "name": "Nginx Logs",
+      "timeFieldName": "@timestamp"
+    }
+  ]
+}
