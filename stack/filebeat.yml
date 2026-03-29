@@ -1,0 +1,25 @@
+filebeat.inputs:
+  - type: filestream
+    id: docker-containers
+    enabled: true
+    paths:
+      - /var/lib/docker/containers/*/*-json.log
+    parsers:
+      - container:
+          stream: all
+          format: docker
+
+processors:
+  - add_docker_metadata:
+      host: "unix:///var/run/docker.sock"
+  - drop_event:
+      when:
+        not:
+          equals:
+            container.name: "connecttion_nginx"
+
+output.kafka:
+  hosts: ["kafka:9092"]
+  topic: "logs-nginx-default"
+  codec.json:
+    pretty: false
