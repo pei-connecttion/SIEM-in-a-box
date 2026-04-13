@@ -63,6 +63,14 @@ until curl -s --cacert config/certs/ca/ca.crt https://es01:9200 | grep -q "missi
   sleep 30
 done
 
+# Wait until the security index is available and the bootstrap password works.
+echo "Waiting for Elasticsearch security readiness"
+until curl -s --cacert config/certs/ca/ca.crt \
+  -u "elastic:${ELASTIC_PASSWORD}" \
+  https://es01:9200/_cluster/health | grep -q 'cluster_name'; do
+  sleep 10
+done
+
 # Set kibana_system password
 echo "Setting kibana_system password"
 until curl -s -X POST \

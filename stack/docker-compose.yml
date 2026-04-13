@@ -23,7 +23,7 @@ services:
       timeout: 5s
       retries: 120
     networks:
-      - siem-network
+      - connecttion
 
   # ============================================
   # Elasticsearch
@@ -74,7 +74,7 @@ services:
       timeout: 10s
       retries: 120
     networks:
-      - siem-network
+      - connecttion
 
   # ============================================
   # Kibana
@@ -117,7 +117,7 @@ services:
       timeout: 10s
       retries: 120
     networks:
-      - siem-network
+      - connecttion
 
 
 
@@ -150,7 +150,7 @@ services:
       timeout: 5s
       retries: 30
     networks:
-      - siem-network
+      - connecttion
 
 
   # ============================================
@@ -170,7 +170,7 @@ services:
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
-      - siem-network
+      - connecttion
 
 
   # ============================================
@@ -204,7 +204,7 @@ services:
       timeout: 10s
       retries: 30
     networks:
-      - siem-network
+      - connecttion
   
   fleet-server:
     container_name: siem-fleet-server
@@ -249,15 +249,14 @@ services:
       - ELASTICSEARCH_PASSWORD=${ELASTIC_PASSWORD}
       - ELASTICSEARCH_CA=/certs/ca/ca.crt
     networks:
-      - siem-network
+      - connecttion
 
 # ============================================
 # Networks
 # ============================================
 networks:
-  siem-network:
-    driver: bridge
-    name: siem-network
+  connecttion:
+    external: true
 
 # ============================================
 # Volumes
